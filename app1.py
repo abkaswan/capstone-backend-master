@@ -17,7 +17,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 import scipy.cluster.hierarchy as shc
-from helper.upload import convert_txt_to_csv, allowed_file, get_file, calculate_meta
+from helper.upload import convert_files_csv_tfidf, convert_txt_to_csv, allowed_file, get_file, calculate_meta
 from helper.general import add_code
 from helper.visualization import generate_histogram, generate_boxplot, generate_atag, generate_correlation, save_plot, apply_pca
 from helper.mining import generate_report, generate_rmse_table, save_model
@@ -88,75 +88,138 @@ def find_stats(filename):
 
 @app.route('/', methods=['GET', 'POST'])
 def hello_world():
-    return json.dumps({'hello':'world from Vaibhav'}), 200
+    return json.dumps({'hello':'world from Rahul'}), 200
 
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    print("request:",request.form)
     if request.method == 'POST':
-        file = request.files['file']
-        if 'description' in request.form:
-            description = request.form['description']
-        else:
-            description = ''
-        if 'miningType' in request.form:
-            mining_type = request.form['miningType']
-        else:
-            mining_type = 'classification'
-        print('file', file)
-        # print("fileType:",request.form['fileType'])
-        print("hasHeader:",request.form['hasHeader'])
-        filename = secure_filename(file.filename)
-        type = filename.rsplit('.', 1)[1].lower()
-        if type == 'txt':
-            print("request.form is ",request.form)
-            if 'delimiter' not in request.form:
-                delimiter = '\s+'
+        if 'file' in request.files:
+            file = request.files['file']
+            if 'description' in request.form:
+                description = request.form['description']
             else:
-                delimiter = request.form['delimiter']
-                if (delimiter == ''):
+                description = ''
+            if 'miningType' in request.form:
+                mining_type = request.form['miningType']
+            else:
+                mining_type = 'classification'
+            print('file', file)
+            # print("fileType:",request.form['fileType'])
+            print("isStructured:",request.form['isStructured'])
+            filename = secure_filename(file.filename)
+            type = filename.rsplit('.', 1)[1].lower()
+            if type == 'txt':
+                print("request.form is ",request.form)
+                if 'delimiter' not in request.form:
                     delimiter = '\s+'
-                print("delimeter:",delimiter)
-        if not allowed_file(filename, ALLOWED_EXTENSIONS):
-            return 'File not allowed', 400
-        if file.filename == '':
-            return 'No file selected', 400
-        if file:
+                else:
+                    delimiter = request.form['delimiter']
+                    if (delimiter == ''):
+                        delimiter = '\s+'
+                    print("delimeter:",delimiter)
+            if not allowed_file(filename, ALLOWED_EXTENSIONS):
+                return 'File not allowed', 400
+            if file.filename == '':
+                return 'No file selected', 400
+            if file:
+                # generating unique id every time so same filenames do not overlap
+                unique_id = str(uuid.uuid4())
+                filename = unique_id + '_' + filename
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                # convert txt file to csv
+                if type == "txt":
+                    filename = convert_txt_to_csv(filename, app.config['UPLOAD_FOLDER'], delimiter)
+                    print('file name after conversion to csv:', filename)
+                file_size = os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], filename)) / 1024**2  # size in MB
+                print('file size in MB', file_size)
+                file_collection = db['data_files']
+                print("file_collection: ",file_collection)
+                file_stats = db['statistics']
+                timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                record = {'filename': filename, 'timestamp': timestamp, 'description': description, 'miningType': mining_type, 'code': []}
+                file_collection.insert_one(record)
+
+                data = get_file(filename, app.config['UPLOAD_FOLDER'])
+                print("data is: ",data)
+                data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], filename+'.json'), orient='records')
+                add_code(filename, file_collection, "import pandas as pd")
+                add_code(filename, file_collection, "import numpy as np")
+                add_code(filename, file_collection, "from sklearn.preprocessing import StandardScaler")
+                add_code(filename, file_collection, "from sklearn.ensemble import RandomForestClassifier")
+                add_code(filename, file_collection, "import seaborn as sns")
+                add_code(filename, file_collection, "import matplotlib.pyplot as plt")
+                add_code(filename, file_collection, "data = pd.read_csv('"+filename+"')")
+                metadata, code = calculate_meta(data)
+                file_stats.insert({'filename': filename, 'stats': metadata}, check_keys=False)
+                #memcache_client.set(filename, metadata)
+                print('metadata', metadata)
+                # after successful completion of function, add that code to database
+                add_code(filename, file_collection, code)
+                return json.dumps({'message': 'file uploaded successfully',
+                                   'filename': filename, 'metadata': metadata}), 200
+        else:
+            listOfFiles = []
+            key = "file0"
+            i = 1
+            while key in request.files:
+                listOfFiles.append(request.files[key])
+                key = key[0:4] + str(i)
+                i += 1
+            if 'description' in request.form:
+                description = request.form['description']
+            else:
+                description = ''
+            if 'miningType' in request.form:
+                mining_type = request.form['miningType']
+            else:
+                mining_type = 'classification'
+
+            filename = secure_filename(listOfFiles[0].filename)
             # generating unique id every time so same filenames do not overlap
             unique_id = str(uuid.uuid4())
             filename = unique_id + '_' + filename
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-            # convert txt file to csv
-            if type == "txt":
-                filename = convert_txt_to_csv(filename, app.config['UPLOAD_FOLDER'], delimiter)
-                print('file name after conversion to csv:', filename)
-            file_size = os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], filename)) / 1024**2  # size in MB
+            # create path of the newly created csv file containing all the tf-idf values
+            filePath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            csvPath = filePath.split('.')[0] + '.csv'
+            # create list of file paths
+            listOfFilePaths = []
+            for eachFile in listOfFiles:
+                eachFileName = secure_filename(eachFile.filename)
+                eachFile.save(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
+                listOfFilePaths.append(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
+            # call method to create the csv files
+            filename = convert_files_csv_tfidf(listOfFiles, listOfFilePaths, csvPath)
+            file_size = os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], filename)) / 1024 ** 2  # size in MB
             print('file size in MB', file_size)
             file_collection = db['data_files']
-            print("file_collection: ",file_collection)
+            print("file_collection: ", file_collection)
             file_stats = db['statistics']
             timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            record = {'filename': filename, 'timestamp': timestamp, 'description': description, 'miningType': mining_type, 'code': []}
+            record = {'filename': filename, 'timestamp': timestamp, 'description': description,
+                      'miningType': mining_type, 'code': []}
             file_collection.insert_one(record)
 
             data = get_file(filename, app.config['UPLOAD_FOLDER'])
-            print("data is: ",data)
-            data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], filename+'.json'), orient='records')
+            print("data is: ", data)
+            data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], filename + '.json'), orient='records')
             add_code(filename, file_collection, "import pandas as pd")
             add_code(filename, file_collection, "import numpy as np")
             add_code(filename, file_collection, "from sklearn.preprocessing import StandardScaler")
             add_code(filename, file_collection, "from sklearn.ensemble import RandomForestClassifier")
             add_code(filename, file_collection, "import seaborn as sns")
             add_code(filename, file_collection, "import matplotlib.pyplot as plt")
-            add_code(filename, file_collection, "data = pd.read_csv('"+filename+"')")
+            add_code(filename, file_collection, "data = pd.read_csv('" + filename + "')")
             metadata, code = calculate_meta(data)
             file_stats.insert({'filename': filename, 'stats': metadata}, check_keys=False)
-            #memcache_client.set(filename, metadata)
+            # memcache_client.set(filename, metadata)
             print('metadata', metadata)
             # after successful completion of function, add that code to database
             add_code(filename, file_collection, code)
             return json.dumps({'message': 'file uploaded successfully',
                                'filename': filename, 'metadata': metadata}), 200
+
 
 
 @app.route('/stats', methods=['GET', 'POST'])
