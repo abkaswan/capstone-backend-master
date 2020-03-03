@@ -34,7 +34,13 @@ import datetime
 from io import StringIO
 import numpy as np
 import joblib
-
+from sklearn.feature_extraction.text import CountVectorizer
+import gensim
+from gensim import corpora, matutils, models
+import pickle
+import scipy.sparse
+from nltk.corpus import stopwords
+import pyLDAvis.gensim
 
 def json_serializer(key, value):
     if type(value) == str:
@@ -93,6 +99,7 @@ def hello_world():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    print("called /upload")
     print("request:",request.form)
     if request.method == 'POST':
         if 'file' in request.files:
@@ -106,6 +113,7 @@ def upload_file():
             else:
                 mining_type = 'classification'
             print('file', file)
+            print('miningType', mining_type)
             # print("fileType:",request.form['fileType'])
             print("isStructured:",request.form['isStructured'])
             filename = secure_filename(file.filename)
@@ -224,6 +232,7 @@ def upload_file():
 
 @app.route('/stats', methods=['GET', 'POST'])
 def get_stats():
+    print("called /stats")
     if 'fileKey' not in request.form:
         return 'please send file-key', 500
     filename = request.form['fileKey']
@@ -249,6 +258,7 @@ def get_stats():
 
 @app.route('/replace-by-mean', methods=['GET', 'POST'])
 def replace_by_mean():
+    print("called /replace-by-mean")
     if 'fileKey' not in request.form or 'columns' not in request.form:
         return 'Please send file-key and column namess', 500
     filename = request.form['fileKey']
@@ -292,6 +302,7 @@ def replace_by_mean():
 
 @app.route('/replace-by-median', methods=['GET', 'POST'])
 def replace_by_median():
+    print("called /replace-by-median")
     if 'fileKey' not in request.form or 'columns' not in request.form:
         return 'Please send fileKey and column names', 500
     filename = request.form['fileKey']
@@ -334,6 +345,7 @@ def replace_by_median():
 
 @app.route('/file-data', methods=['GET', 'POST'])
 def get_file_data():
+    print("called /file-data")
     print('form', request.form)
     if 'fileKey' not in request.form:
         print('sending 500')
@@ -341,6 +353,7 @@ def get_file_data():
     file_key = request.form['fileKey']
     print('file-key', file_key)
     file_collection = db['data_files']
+
     ls = list(file_collection.find({'filename': file_key}))
 
     code = "# reading the head of the file\n"
@@ -355,6 +368,7 @@ def get_file_data():
 
 @app.route('/stats-by-column', methods=['POST'])
 def stats_by_col():
+    print("called /stats-by-column")
     if 'fileKey' not in request.form or 'column' not in request.form:
         print('sending 500')
         return 'Please send file-key and/or column', 500
@@ -414,6 +428,7 @@ def stats_by_col():
 
 @app.route('/sample-files', methods=['GET'])
 def get_sample_files():
+    print("called /sample-files")
     public_tokens = ['b83aa9a7-d265-45df-b584-223b81a3b557_1000_Sales_Records.csv',
                      'ef805257-1f8d-4bbd-a31e-ab78c42e5890_FL_insurance_sample.csv',
                      'e76d9c91-05d4-4307-a9fa-d7ae79884931_Diabetess.csv']
@@ -432,6 +447,7 @@ def get_sample_files():
 
 @app.route('/naive-bayes', methods=['POST'])
 def naive_bayes_classifier():
+    print("called /naive-bayes")
     if 'fileKey' not in request.form or 'columns' not in request.form:
         return 'Please send fileKey and column names', 500
     filename = request.form['fileKey']
@@ -443,6 +459,7 @@ def naive_bayes_classifier():
 
 @app.route("/remove-missing", methods=['POST'])
 def remove_missing():
+    print("called /remove-missing")
     if 'fileKey' not in request.form or 'column' not in request.form:
         return 'Please send fileKey and column names', 500
     file_key = request.form['fileKey']
@@ -467,6 +484,7 @@ def remove_missing():
 
 @app.route("/replace-by-specific", methods=['POST'])
 def replace_by_specific():
+    print("called /replace-by-specific")
     if 'fileKey' not in request.form or 'column' not in request.form or 'value' not in request.form:
         return 'Please send fileKey and column names', 500
     file_key = request.form['fileKey']
@@ -495,6 +513,7 @@ def replace_by_specific():
 
 @app.route("/replace-value", methods=['POST'])
 def replace_value():
+    print("called /replace-value")
     if 'fileKey' not in request.form or 'column' not in request.form or 'oldValue' not in request.form and 'newValue' not in request.form:
         return 'Please send fileKey and column names', 500
     file_key = request.form['fileKey']
@@ -525,6 +544,7 @@ def replace_value():
 
 @app.route("/remove-range", methods=['POST'])
 def remove_range():
+    print("called /remove-range")
     if 'fileKey' not in request.form or 'column' not in request.form or 'min' not in request.form and 'max' not in request.form:
         return 'Please send fileKey and column names', 500
     file_key = request.form['fileKey']
@@ -563,12 +583,14 @@ def remove_range():
 
 @app.route('/get-help', methods=['GET', 'POST'])
 def get_help():
+    print("called /get-help")
     content = "Nothing to display"
     # jsonified_data = json.loads(req_data)
     topic = request.form['topic']
     print('topic', topic)
     data_collection = db['help-data']
     results = list(data_collection.find({'topic': topic}))
+    print(results)
     print('results', results[0]['description'])
     if len(results) == 1:
         return json.dumps({'description': results[0]['description']})
@@ -579,6 +601,7 @@ def get_help():
 
 @app.route('/visualization', methods=['GET', 'POST'])
 def visualization():
+    print("called /visualization")
     if 'fileKey' not in request.form or 'columns' not in request.form or 'visType' not in request.form:
         return 'Please send fileKey and column names', 500
     print('columns', request.form['columns'], 'type', type(request.form['columns']))
@@ -630,6 +653,7 @@ def visualization():
 
 @app.route('/standard-scale', methods=['GET', 'POST'])
 def standard_scale():
+    print("called /standard-scale")
     if 'fileKey' not in request.form or 'columns' not in request.form:
         return 'Please send fileKey and column names', 500
     print('columns', request.form['columns'], 'type', type(request.form['columns']))
@@ -652,6 +676,7 @@ def standard_scale():
 
 @app.route('/random-forest', methods=['GET', 'POST'])
 def random_forest():
+    print("called /random-forest")
     print('inside random forest')
     feature_file = None
     roc_file = None
@@ -868,6 +893,7 @@ def random_forest():
 
 @app.route('/linear-regression', methods=['GET', 'POST'])
 def linear_regression():
+    print("called /linear-regression")
     if any([i not in request.form for i in ['fileKey', 'valuation', 'columns', 'valuationType', 'target_col']]):
         print('value not found')
         return 'Please send missing values', 500
@@ -986,6 +1012,8 @@ def linear_regression():
 
 @app.route('/hierarchical', methods=['GET', 'POST'])
 def hierarchical():
+    print("called /hierarchical")
+    print("request.form: ",request.form)
     if request.method == 'POST':
         print('inside hierarchical clustering')
         features = request.form['columns'].split(',')
@@ -1027,6 +1055,7 @@ def hierarchical():
 
 @app.route('/svm', methods=['POST'])
 def svm():
+    print("called /svm")
     feature_file = None
     roc_file = None
     conf_file = None
@@ -1134,6 +1163,7 @@ def svm():
 
 @app.route('/codebox', methods=['GET', 'POST'])
 def codebox():
+    print("called /codebox")
     if 'code' not in request.form:
         return {'message': 'Please send the code'}
 
@@ -1151,6 +1181,7 @@ def codebox():
 
 @app.route('/get-code', methods=['GET', 'POST'])
 def get_code():
+    print("called /get-code")
     if 'fileKey' not in request.form:
         filename = 'f722e823-df64-423e-ba58-4913a316ab57_Diabetess.csv'
         # return {'message': 'Please send the fileKey'}
@@ -1168,6 +1199,7 @@ def get_code():
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    print("called /predict")
     if 'model_key' not in request.form:  # first, check we got the key or not
         return json.dumps({'message': 'please send model key'}), 500
     model_key = request.form['model_key']
@@ -1196,10 +1228,50 @@ def predict():
 
 @app.route('/posts', methods=['GET', 'POST'])
 def posts():
+    print("called /posts")
     print('incoming', request.get_json())
     print('form', request.form['body'])
     print('sending', json.dumps({'id': 101, 'title': request.form['title'], 'body': request.form['body']}))
     return json.dumps({'userId': 123, 'id': 101, 'title': request.form['title'], 'body': request.form['body']}), 200
+
+@app.route('/topic-modeling', methods=['GET', 'POST'])
+def topicModeling():
+    print("called /topic-modeling")
+    print(request.form['fileKey'])
+    file_key = request.form['fileKey']
+    num_topics = request.form['n_topics']
+    data = get_file(file_key, app.config['UPLOAD_FOLDER'])
+    '''data = data.rename(columns={'filename':'allWords'})
+    data.set_index('allWords', inplace=True)
+    data = data.transpose()
+    data = data.reset_index()
+    data = data.rename(columns={'index':'allWords'})
+    data = data[['allWords']]'''
+    listOfWords = list(data.columns.values)
+    listOfWords = listOfWords[1:]
+    stop_words = set(stopwords.words('english'))
+    #print("list of words before removing stop words:", listOfWords)
+    listOfWords = [word for word in listOfWords if not word in stop_words]
+    #print("list of words after removing stop words:", listOfWords)
+
+    text_data = []
+    text_data.append(listOfWords)
+
+    dictionary = corpora.Dictionary(text_data)
+    corpus = [dictionary.doc2bow(text) for text in text_data]
+    pickle.dump(corpus, open('corpus.pkl', 'wb'))
+    dictionary.save('dictionary.gensim')
+    ldamodel = gensim.models.ldamodel.LdaModel(corpus, num_topics=num_topics, id2word=dictionary, passes=15)
+    ldamodel.save('model.gensim')
+
+    dictionary = gensim.corpora.Dictionary.load('dictionary.gensim')
+    corpus = pickle.load(open('corpus.pkl', 'rb'))
+    lda = gensim.models.ldamodel.LdaModel.load('model.gensim')
+    lda_display = pyLDAvis.gensim.prepare(lda, corpus, dictionary, sort_topics=False)
+    #print(lda_display)
+    html_filename = app.config['VIZ_FOLDER'] + "\\" + 'topics.html'
+    pyLDAvis.save_html(lda_display, html_filename)
+    return json.dumps({'html_filename': html_filename}), 200
 
 
 if __name__ == '__main__':

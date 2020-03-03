@@ -88,7 +88,9 @@ def convert_txt_to_csv(filename, path, delimiter):
             for lineInTXT in txtFile:
                     if (delimiter != ','):
                             lineInCSV = re.sub(delimiter, ",", lineInTXT.strip())+'\n'
-                    print("lineInCSV:",lineInCSV)
+                    else:
+                        lineInCSV = lineInTXT.strip()+'\n'
+                    #print("lineInCSV:",lineInCSV)
                     csvFile.write(lineInCSV)
 
     csvFileName = getNameFromPath(csvPath)
@@ -164,13 +166,13 @@ def na_count(data):
     missing_list = dict()
     cols = list(data.columns)
     for col in cols:
-        print('counting for col', col)
+        #print('counting for col', col)
         count = 0
         temp = data[col]
         for i, v in temp.items():
             if v in ('-', '?', 'na', 'n/a', 'NA', 'N/A'):
                 count += 1
-        print('column data', data[col].isnull())
+        #print('column data', data[col].isnull())
         count += len(np.where(data[col].isnull())[0])
         missing_list[col] = count
 
