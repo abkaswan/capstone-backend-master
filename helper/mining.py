@@ -3,6 +3,26 @@ import uuid
 import os
 import joblib
 
+'''def parseLDAdisplayForTopicModeling(lda_display):
+    
+
+    print(lda_display[1])
+    allCategories = list(lda_display[1]['Category'])
+    allWords = list(lda_display[1]['Term'])
+    allTotals = list(lda_display[1]['Total'])
+
+    topicWordDict = {}
+
+    for i in range(0,len(allCategories)):
+        if allCategories[i] != 'Default':
+            if allCategories[i] not in topicWordDict:
+                topicWordDict[allCategories[i]] = []
+            elif allTotals[i]>=1.0:
+                topicWordDict[allCategories[i]].append(allWords[i])
+
+    print(topicWordDict)'''
+
+
 
 def generate_report(report):
     output = []
@@ -35,3 +55,4 @@ def save_model(model, features, model_name, path, encoder_object = {}):
     pickle.dump(meta_object, open(os.path.join(path, feature_file_name), 'wb'))
     print('where model is stored', os.path.join(path, model_file_name))
     return model_file_name, feature_file_name
+

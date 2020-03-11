@@ -41,6 +41,8 @@ import pickle
 import scipy.sparse
 from nltk.corpus import stopwords
 import pyLDAvis.gensim
+import time
+from gensim.models import Word2Vec
 
 def json_serializer(key, value):
     if type(value) == str:
@@ -64,7 +66,7 @@ app.config['VIZ_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-ma
 
 
 
-ALLOWED_EXTENSIONS = set(['csv', 'txt', 'xlsx'])
+ALLOWED_EXTENSIONS_STRUCTURED_FILE = set(['csv', 'txt', 'xlsx'])
 mongo_client = pymongo.MongoClient("mongodb://localhost:27017/")
 db = mongo_client["data-mining"]
 file_collection = db['data_files']
@@ -127,7 +129,7 @@ def upload_file():
                     if (delimiter == ''):
                         delimiter = '\s+'
                     print("delimeter:",delimiter)
-            if not allowed_file(filename, ALLOWED_EXTENSIONS):
+            if not allowed_file(filename, ALLOWED_EXTENSIONS_STRUCTURED_FILE):
                 return 'File not allowed', 400
             if file.filename == '':
                 return 'No file selected', 400
@@ -677,7 +679,6 @@ def standard_scale():
 @app.route('/random-forest', methods=['GET', 'POST'])
 def random_forest():
     print("called /random-forest")
-    print('inside random forest')
     feature_file = None
     roc_file = None
     conf_file = None
@@ -1239,20 +1240,23 @@ def topicModeling():
     print("called /topic-modeling")
     print(request.form['fileKey'])
     file_key = request.form['fileKey']
+    print("file_key: ", file_key)
+
+    # retrieve latest file key from db if not retrieved from front end
+    if file_key == "testkey":
+        file_collection = db['data_files']
+        lastEntry = file_collection.find().sort([('timestamp', -1)]).limit(1)
+        if lastEntry.count()==0:
+            return json.dumps({'html_filename': "No file has been uploaded. Please upload atleast 1 file in the upload file tab."}), 200
+        else:
+            for entry in lastEntry:
+                file_key = entry['filename']
+
+    print("file_key: ", file_key)
     num_topics = request.form['n_topics']
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
-    '''data = data.rename(columns={'filename':'allWords'})
-    data.set_index('allWords', inplace=True)
-    data = data.transpose()
-    data = data.reset_index()
-    data = data.rename(columns={'index':'allWords'})
-    data = data[['allWords']]'''
     listOfWords = list(data.columns.values)
     listOfWords = listOfWords[1:]
-    stop_words = set(stopwords.words('english'))
-    #print("list of words before removing stop words:", listOfWords)
-    listOfWords = [word for word in listOfWords if not word in stop_words]
-    #print("list of words after removing stop words:", listOfWords)
 
     text_data = []
     text_data.append(listOfWords)
@@ -1268,11 +1272,103 @@ def topicModeling():
     corpus = pickle.load(open('corpus.pkl', 'rb'))
     lda = gensim.models.ldamodel.LdaModel.load('model.gensim')
     lda_display = pyLDAvis.gensim.prepare(lda, corpus, dictionary, sort_topics=False)
-    #print(lda_display)
+
+    '''if (len(lda_display)>0):
+        parseLDAdisplayForTopicModeling(lda_display)'''
+
     html_filename = app.config['VIZ_FOLDER'] + "\\" + 'topics.html'
     pyLDAvis.save_html(lda_display, html_filename)
-    return json.dumps({'html_filename': html_filename}), 200
 
+    file_collection = db['help-data']
+
+    # delete previous topics.html saved in server
+    file_collection.delete_many({'description': 'topics.html'})
+
+    record = {'topic': "TM_output", 'description': "topics.html"}
+    file_collection.insert_one(record)
+
+    return json.dumps({'description': "topics.html"}), 200
+
+@app.route('/word-embedding', methods=['GET', 'POST'])
+def wordEmbedding():
+    print("called /word-embedding")
+    print(request.form['fileKey'])
+    file_key = request.form['fileKey']
+    print("file_key: ", file_key)
+
+    # retrieve latest file key from db if not retrieved from front end
+    if file_key == "testkey":
+        file_collection = db['data_files']
+        lastEntry = file_collection.find().sort([('timestamp', -1)]).limit(1)
+        if lastEntry.count() == 0:
+            return json.dumps({'result': "No file has been uploaded. Please upload atleast 1 file in the upload file tab."}), 200
+        else:
+            for entry in lastEntry:
+                file_key = entry['filename']
+
+
+    data = get_file(file_key, app.config['UPLOAD_FOLDER'])
+    print("data:",data)
+    listOfWords = list(data.columns.values)
+    dataAsList = data.values.tolist()
+
+    allWordsInAllFiles = []
+    for eachRow in dataAsList:
+        wordsPerFile = []
+        for i in range(1,len(eachRow)):
+            if float(eachRow[i])>0:
+                wordsPerFile.append(listOfWords[i])
+        allWordsInAllFiles.append(wordsPerFile)
+
+    print("allWordsInAllFiles:",allWordsInAllFiles)
+        # train model
+    model = Word2Vec(allWordsInAllFiles, min_count=1)
+    # fit a 2d PCA model to the vectors
+    X = model[model.wv.vocab]
+    pca = PCA(n_components=2)
+    result = pca.fit_transform(X)
+    # create a scatter plot of the projection
+    plt.scatter(result[:, 0], result[:, 1])
+    words = list(model.wv.vocab)
+    for i, word in enumerate(words):
+        plt.annotate(word, xy=(result[i, 0], result[i, 1]))
+
+    word2vec_plot = save_plot(plt, app.config['VIZ_FOLDER'], 'word2vec')
+    print("word2vec_plot: ",word2vec_plot)
+
+    return json.dumps({'saved_file': word2vec_plot}), 200
+
+@app.route('/remove-stop-words', methods=['GET', 'POST'])
+def removeStopWords():
+    print("called /remove-stop-words")
+    file_key = request.form['fileKey']
+    stop_words = request.form['stop_words']
+    data = get_file(file_key, app.config['UPLOAD_FOLDER'])
+    print("data: ",data)
+    print("stop words: ",stop_words)
+    listOfWordsInData = list(data.columns.values)[1:]
+    # get stop words from the stopwords library
+    stopWordsInLibrary = set(stopwords.words('english'))
+    listOfStopWordsInData = [word for word in listOfWordsInData if word in stopWordsInLibrary]
+    print("list of stop words in data:", listOfStopWordsInData)
+    # remove all stop words from the data frame
+    if (len(listOfStopWordsInData)>0):
+        data = data.drop(columns=listOfStopWordsInData)
+    if (len(stop_words)>0):
+        stop_words = stop_words.split(',')
+        listOfWordsInData = list(data.columns.values)[1:]
+        for eachStopWord in stop_words:
+            if eachStopWord in listOfWordsInData:
+                data = data.drop(columns=eachStopWord)
+    print("data after removing stopwords:", data)
+    data.to_csv(os.path.join(os.path.join(app.config['UPLOAD_FOLDER'], file_key)), index=False)
+    data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
+    # Update modified column - schema in statistics table in db
+    metadata, code = calculate_meta(data)
+    file_stats = db['statistics']
+    file_stats.update({'filename': file_key}, {'$set':{'stats': metadata}})
+
+    return json.dumps({"message": "Removed stop words from the tf-idf table successfully"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)

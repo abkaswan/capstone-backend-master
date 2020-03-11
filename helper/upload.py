@@ -4,15 +4,40 @@ import numpy as np
 from multiprocessing import Pool, freeze_support
 import re
 from sklearn.feature_extraction.text import TfidfVectorizer
+import pytesseract
+import textract
 
-def returnTXTasSingleString(filePath):
+supportedImageExtension = ['bmp', 'gif', 'jfif', 'jpeg', 'jpg', 'png', 'pnm', 'tiff']
+
+def getFileExtension(filename):
     '''
-    Return a single string containing all lines of the txt file
-    :param filePath: the file path of the txt file
+    Return extensin of the filename - txt, csv, jpg, png, etc.
+    :param filename: the full filename including the extension
     :return:
     '''
-    with open(filePath, encoding="utf8") as file:
-        data = file.read().replace('\n', '')
+    extension = filename.rsplit('.', 1)[1].lower()
+    return extension
+
+def returnUnstructuredFileAsSingleString(filePath):
+    '''
+    Return a single string containing all lines of the unstructured file
+    :param filePath: the file path of the unstructured file
+    :return:
+    '''
+    filename = getNameFromPath(filePath)
+    extension = getFileExtension(filename)
+    print("extension:"+extension)
+    data = ''
+    if extension == 'txt':
+        with open(filePath, encoding="utf8") as file:
+            data = file.read().replace('\n', '')
+    elif extension in supportedImageExtension:
+        data = pytesseract.image_to_string(filePath)
+    elif extension == 'docx':
+        data = textract.process(filePath)
+        data = data.decode("utf-8")
+
+    print("data after conversion: "+data)
     return data
 
 def getNameFromPath(filePath):
@@ -35,7 +60,7 @@ def convert_files_csv_tfidf(listOfFiles, listOfFilePaths, csvPath):
     listOfFilesAsStrs = []
 
     for eachFilePath in listOfFilePaths:
-        listOfFilesAsStrs.append(returnTXTasSingleString(eachFilePath))
+        listOfFilesAsStrs.append(returnUnstructuredFileAsSingleString(eachFilePath))
 
     # perform tf-idf and create result dataframe
     vectorizer = TfidfVectorizer()
@@ -110,11 +135,8 @@ def get_file(filename, path, delimiter='\t'):
     :param delimiter: how you want to split the file
     :return: dataframe of the file
     """
-    extension = filename.rsplit('.', 1)[1].lower()
+    extension = getFileExtension(filename)
     if extension == 'csv':
-        '''return pd.read_csv(os.path.join(path, filename))
-    elif extension == 'txt':
-        filename = convert_txt_to_csv(os.path.join(path, filename))'''
         return pd.read_csv(os.path.join(path, filename))
 
 
