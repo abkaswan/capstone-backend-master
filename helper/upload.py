@@ -6,8 +6,48 @@ import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 import pytesseract
 import textract
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer, WordNetLemmatizer 
+from nltk.tokenize import word_tokenize
+import nltk
+nltk.download('punkt')
 
 supportedImageExtension = ['bmp', 'gif', 'jfif', 'jpeg', 'jpg', 'png', 'pnm', 'tiff']
+
+def performStemming(listOfFilesAsStrs):
+    listOfFilesAsStrsStem = []
+    for eachStr in listOfFilesAsStrs:
+        words = word_tokenize(eachStr)
+        rootWords = []
+        ps = PorterStemmer()
+        for w in words:
+            rootWord = ps.stem(w)
+            rootWords.append(rootWord)
+        listOfFilesAsStrsStem.append(' '.join([str(eachRootWord) for eachRootWord in rootWords]))
+    return listOfFilesAsStrsStem
+
+def performLemmatization(listOfFilesAsStrs):
+    listOfFilesAsStrsStem = []
+    for eachStr in listOfFilesAsStrs:
+        words = word_tokenize(eachStr)
+        rootWords = []
+        lemmatizer = WordNetLemmatizer()
+        for w in words:
+            rootWord = lemmatizer.lemmatize(w)
+            rootWords.append(rootWord)
+        listOfFilesAsStrsStem.append(' '.join([str(eachRootWord) for eachRootWord in rootWords]))
+    return listOfFilesAsStrsStem
+
+def removeStopWordsAndOtherUselessText(wordList):
+    '''
+    Remove stop words and other useless text like numbers from a given list of words
+    :param wordList:
+    :return:
+    '''
+    # get stop words from the stopwords library
+    stopWordsInLibrary = set(stopwords.words('english'))
+    updatedWordList = [word for word in wordList if word not in stopWordsInLibrary and not word.isdigit()]
+    return updatedWordList
 
 def getFileExtension(filename):
     '''
@@ -49,9 +89,11 @@ def getNameFromPath(filePath):
     folderList = filePath.split('\\')
     return folderList[len(folderList)-1]
 
-def convert_files_csv_tfidf(listOfFiles, listOfFilePaths, csvPath):
+def convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath):
     """
     Generate a csv file with all the td-idf values of all words in the passed list if files
+    :param: stemming: flag to to check if user wants stemming to be performed on the file
+    :param: lemmatization: flag to to check if user wants lemmatization to be performed on the file
     :param listOfFiles: list of all text files
     :param listOfFilePaths: list of all respective paths of the text files
     :param csvPath: path where the created csv file is saved
@@ -60,21 +102,36 @@ def convert_files_csv_tfidf(listOfFiles, listOfFilePaths, csvPath):
     listOfFilesAsStrs = []
 
     for eachFilePath in listOfFilePaths:
-        listOfFilesAsStrs.append(returnUnstructuredFileAsSingleString(eachFilePath))
+        allContentsAsSingleString = returnUnstructuredFileAsSingleString(eachFilePath)
+        if (allContentsAsSingleString!=""):
+            listOfFilesAsStrs.append(allContentsAsSingleString)
+
+    if (stemming=="Yes"):
+        listOfFilesAsStrs = performStemming(listOfFilesAsStrs)
+
+    if (lemmatization=="Yes"):
+       listOfFilesAsStrs = performLemmatization(listOfFilesAsStrs)
+
+    if (len(listOfFilesAsStrs)==0):
+        return "fail"
 
     # perform tf-idf and create result dataframe
     vectorizer = TfidfVectorizer()
     vectors = vectorizer.fit_transform(listOfFilesAsStrs)
     feature_names = vectorizer.get_feature_names()
+    print("feature_names:\n", feature_names)
+    #feature_names = removeStopWordsAndOtherUselessText(feature_names)
     dense = vectors.todense()
     denselist = dense.tolist()
     df = pd.DataFrame(denselist, columns=feature_names)
-    #df = df.transpose()
-    #print("transposed df:",df)
-    # create the csv file using the dataframe
+    # remove stop words and other useless words as columns from the dataframe df
+    stopWordsInLibrary = set(stopwords.words('english'))
+    listOfUselessWords = [word for word in feature_names if word in stopWordsInLibrary or word.isdigit()]
+    print("list of useless words:\n", listOfUselessWords)
+    df = df.drop(columns=listOfUselessWords)
+
     dfRowsAsCSV = df.to_csv(index=False).split('\r\n')
-    #dfRowsAsCSV = df.to_csv().split('\r\n')
-    #print("transposed df as csv:",df.to_csv())
+
     count = 0
     with open(csvPath, 'w') as csvFile:
         for eachLine in dfRowsAsCSV:

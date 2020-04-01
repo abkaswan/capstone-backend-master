@@ -41,7 +41,6 @@ import pickle
 import scipy.sparse
 from nltk.corpus import stopwords
 import pyLDAvis.gensim
-import time
 from gensim.models import Word2Vec
 
 def json_serializer(key, value):
@@ -104,6 +103,7 @@ def upload_file():
     print("called /upload")
     print("request:",request.form)
     if request.method == 'POST':
+        # Unstructured data has been uploaded
         if 'file' in request.files:
             file = request.files['file']
             if 'description' in request.form:
@@ -170,6 +170,7 @@ def upload_file():
                 return json.dumps({'message': 'file uploaded successfully',
                                    'filename': filename, 'metadata': metadata}), 200
         else:
+            # Unstructured data has been uploaded
             listOfFiles = []
             key = "file0"
             i = 1
@@ -177,14 +178,21 @@ def upload_file():
                 listOfFiles.append(request.files[key])
                 key = key[0:4] + str(i)
                 i += 1
+
             if 'description' in request.form:
                 description = request.form['description']
             else:
                 description = ''
-            if 'miningType' in request.form:
-                mining_type = request.form['miningType']
+
+            if 'stemming' in request.form:
+                stemming = request.form['stemming']
             else:
-                mining_type = 'classification'
+                stemming = 'No'
+
+            if 'lemmatization' in request.form:
+                lemmatization = request.form['lemmatization']
+            else:
+                lemmatization = 'No'
 
             filename = secure_filename(listOfFiles[0].filename)
             # generating unique id every time so same filenames do not overlap
@@ -199,8 +207,13 @@ def upload_file():
                 eachFileName = secure_filename(eachFile.filename)
                 eachFile.save(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
                 listOfFilePaths.append(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
-            # call method to create the csv files
-            filename = convert_files_csv_tfidf(listOfFiles, listOfFilePaths, csvPath)
+            # call method to create to generate the dataframe and create the csv files
+            filename = convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath)
+
+            # handle case when files uploaded have no data
+            if filename == "fail":
+                return json.dumps({'message': 'Error while parsing the unstructured file. Could be because the file has no data.'}), 200
+
             file_size = os.path.getsize(os.path.join(app.config['UPLOAD_FOLDER'], filename)) / 1024 ** 2  # size in MB
             print('file size in MB', file_size)
             file_collection = db['data_files']
@@ -208,11 +221,11 @@ def upload_file():
             file_stats = db['statistics']
             timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             record = {'filename': filename, 'timestamp': timestamp, 'description': description,
-                      'miningType': mining_type, 'code': []}
+                      'stemming': stemming, 'lemmatization': lemmatization, 'code': []}
             file_collection.insert_one(record)
 
             data = get_file(filename, app.config['UPLOAD_FOLDER'])
-            print("data is: ", data)
+            #print("data is: ", data)
             data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], filename + '.json'), orient='records')
             add_code(filename, file_collection, "import pandas as pd")
             add_code(filename, file_collection, "import numpy as np")
@@ -224,10 +237,10 @@ def upload_file():
             metadata, code = calculate_meta(data)
             file_stats.insert({'filename': filename, 'stats': metadata}, check_keys=False)
             # memcache_client.set(filename, metadata)
-            print('metadata', metadata)
+            #print('metadata', metadata)
             # after successful completion of function, add that code to database
             add_code(filename, file_collection, code)
-            return json.dumps({'message': 'file uploaded successfully',
+            return json.dumps({'message': 'File uploaded successfully',
                                'filename': filename, 'metadata': metadata}), 200
 
 
@@ -1330,6 +1343,7 @@ def wordEmbedding():
     # create a scatter plot of the projection
     plt.scatter(result[:, 0], result[:, 1])
     words = list(model.wv.vocab)
+    print("words:",words)
     for i, word in enumerate(words):
         plt.annotate(word, xy=(result[i, 0], result[i, 1]))
 
@@ -1342,25 +1356,12 @@ def wordEmbedding():
 def removeStopWords():
     print("called /remove-stop-words")
     file_key = request.form['fileKey']
-    stop_words = request.form['stop_words']
+    list_columns_to_remove = request.form['columns'].split(',')
+    print("list_columns_to_remove: ",list_columns_to_remove)
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
     print("data: ",data)
-    print("stop words: ",stop_words)
-    listOfWordsInData = list(data.columns.values)[1:]
-    # get stop words from the stopwords library
-    stopWordsInLibrary = set(stopwords.words('english'))
-    listOfStopWordsInData = [word for word in listOfWordsInData if word in stopWordsInLibrary]
-    print("list of stop words in data:", listOfStopWordsInData)
-    # remove all stop words from the data frame
-    if (len(listOfStopWordsInData)>0):
-        data = data.drop(columns=listOfStopWordsInData)
-    if (len(stop_words)>0):
-        stop_words = stop_words.split(',')
-        listOfWordsInData = list(data.columns.values)[1:]
-        for eachStopWord in stop_words:
-            if eachStopWord in listOfWordsInData:
-                data = data.drop(columns=eachStopWord)
-    print("data after removing stopwords:", data)
+    data = data.drop(columns=list_columns_to_remove)
+    print("data after removing columns/chosen words to remove:", data)
     data.to_csv(os.path.join(os.path.join(app.config['UPLOAD_FOLDER'], file_key)), index=False)
     data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
     # Update modified column - schema in statistics table in db
@@ -1369,6 +1370,7 @@ def removeStopWords():
     file_stats.update({'filename': file_key}, {'$set':{'stats': metadata}})
 
     return json.dumps({"message": "Removed stop words from the tf-idf table successfully"}), 200
+
 
 if __name__ == '__main__':
     app.run(debug=True)
