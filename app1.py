@@ -63,6 +63,7 @@ CORS(app, support_credentials=True)
 print('current path of application', os.getcwd())
 app.config['UPLOAD_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static\data-file'
 app.config['VIZ_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static'
+app.config['WE_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static\word-embedding'
 
 
 
@@ -208,15 +209,16 @@ def upload_file():
                     # function has been called from the workflow screen
                     username = request.form['username']
                     workflow_name = request.form['workflow_name']
+                    type = request.form['type']
                     workflow_file_db = db['workflow-file'] # db to map username and workflow name with uploaded file
-                    # check if a file has been uploaded with the same username and same workflow name
-                    ls = list(workflow_file_db.find({'username': username,'workflow_name': workflow_name}))
+                    # check if a file has been uploaded with the same username and same workflow name and same workflow type - structured or unstructured
+                    ls = list(workflow_file_db.find({'username': username,'workflow_name': workflow_name,'type':type}))
 
                     if (len(ls)==0): # no file has been uploaded with the same username and same workflow name
-                        workflow_file_db.insert({'version': 1,'username': username,'workflow_name': workflow_name, 'filename': filename})
+                        workflow_file_db.insert({'version': 1,'username': username,'workflow_name': workflow_name, 'type':type, 'filename': filename})
                     else:
                         latest_version = int(ls[len(ls)-1]['version'])
-                        workflow_file_db.insert({'version': latest_version+1,'username': username, 'workflow_name': workflow_name, 'filename': filename})
+                        workflow_file_db.insert({'version': latest_version+1,'username': username, 'workflow_name': workflow_name, 'type':type, 'filename': filename})
 
 
                 return json.dumps({'message': 'file uploaded successfully',
@@ -313,6 +315,27 @@ def upload_file():
             #print('metadata', metadata)
             # after successful completion of function, add that code to database
             add_code(filename, file_collection, code)
+
+            if 'workflow' in request.form:
+                # function has been called from the workflow screen
+                username = request.form['username']
+                workflow_name = request.form['workflow_name']
+                type = request.form['type']
+                workflow_file_db = db['workflow-file']  # db to map username and workflow name with uploaded file
+                # check if a file has been uploaded with the same username and same workflow name and same workflow type - structured or unstructured
+                ls = list(workflow_file_db.find({'username': username, 'workflow_name': workflow_name, 'type': type}))
+
+                if (len(ls) == 0):  # no file has been uploaded with the same username and same workflow name
+                    workflow_file_db.insert(
+                        {'version': 1, 'username': username, 'workflow_name': workflow_name, 'type': type,
+                         'filename': filename})
+                else:
+                    latest_version = int(ls[len(ls) - 1]['version'])
+                    workflow_file_db.insert(
+                        {'version': latest_version + 1, 'username': username, 'workflow_name': workflow_name,
+                         'type': type, 'filename': filename})
+
+
             return json.dumps({'message': 'File uploaded successfully',
                                'filename': filename, 'metadata': metadata}), 200
 
@@ -1373,10 +1396,10 @@ def topicModeling():
     if len(ls)>0:
         versionNos = []
         for i in range(len(ls)):
-            versionNos.append(ls[i]['version'])
+            versionNos.append(int(ls[i]['version']))
 
         versionNos.sort()
-        version = str(int(versionNos[len(versionNos)-1])+1)
+        version = str(versionNos[len(versionNos)-1]+1)
         html_filename = 'topics_' + version + '.html'
 
     else:
@@ -1411,7 +1434,6 @@ def wordEmbedding():
         else:
             for entry in lastEntry:
                 file_key = entry['filename']
-
 
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
 
@@ -1449,7 +1471,7 @@ def wordEmbedding():
     for i, word in enumerate(words):
         plt.annotate(word, xy=(result[i, 0], result[i, 1]))
 
-    word2vec_plot = save_plot(plt, app.config['VIZ_FOLDER'], 'word2vec')
+    word2vec_plot = save_plot(plt, app.config['WE_FOLDER'], 'word2vec')
     print("word2vec_plot: ",word2vec_plot)
 
     return json.dumps({'saved_file': word2vec_plot}), 200
@@ -1506,7 +1528,8 @@ def getWorkflow():
     texts = lastWorkflowEntry['texts']
     colors = lastWorkflowEntry['colors']
     locs = lastWorkflowEntry['locs']
-    return json.dumps({'message': 'success', 'texts':texts, 'colors':colors, 'locs':locs}), 200
+    filename = lastWorkflowEntry['filename']
+    return json.dumps({'message': 'success', 'texts':texts, 'colors':colors, 'locs':locs, 'filename':filename}), 200
 
 @app.route('/deleteWorkflow', methods=['GET', 'POST'])
 def deleteWorkflow():
@@ -1561,7 +1584,7 @@ def saveWorkflow():
 
 
     file_collection = db['workflow-data']
-    ls = list(file_collection.find({'username': username, 'workflow_name': workflow_name}))
+    ls = list(file_collection.find({'username': username, 'workflow_name': workflow_name, 'type':type}))
     if (len(ls) == 0):
         record = {'username': username, 'workflow_name':workflow_name, 'filename':filename, 'type':type, 'texts':texts, 'colors': colors, "locs":locs}
         file_collection.insert(record)
@@ -1576,14 +1599,16 @@ def displayDataWorkflow():
     print("request.form:", request.form)
     username = request.form['username']
     workflow_name = request.form['workflow_name']
+    type = request.form['type']
     key = request.form['key']
     filename = request.form['filename']
-    topic = username + '_' + workflow_name + '_' + key
+    topic = username + '_' + workflow_name + '_' + type + '_' + key
     html_files_db = db['help-data']
     # check if a html file containing the data at this node has been created before
     ls = list(html_files_db.find({'topic': topic}))
-    description = username + '_' + workflow_name + '_' + key + '_' + filename.split('.')[0] + '.html'
+    description = username + '_' + workflow_name + '_' + type + '_' + key + '_' + filename.split('.')[0] + '.html'
     if (len(ls) == 0):  # no file has been uploaded with the same username and same workflow name
+        print("HTML File does not exist. Created first time.")
         data = get_file(filename, app.config['UPLOAD_FOLDER'])
         data_html = data.to_html()
         # write html to file
@@ -1593,6 +1618,7 @@ def displayDataWorkflow():
         data_html_file.close()
         html_files_db.insert({'topic': topic, 'description': description})
     else:
+        print("HTML File exists.")
         workflow_db = db['workflow-data']
         workflow_ls = list(workflow_db.find({'username': username,'workflow_name':workflow_name}))
         if (len(workflow_ls)>0):
@@ -1602,6 +1628,8 @@ def displayDataWorkflow():
 
             # different file uploaded for same workflow or file has been modified
             if filename!=saved_filename:
+                print("New File uploaded.")
+
                 # update help data in this case
                 data = get_file(filename, app.config['UPLOAD_FOLDER'])
                 data_html = data.to_html()
