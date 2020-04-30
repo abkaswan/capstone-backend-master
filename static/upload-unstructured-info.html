@@ -1,0 +1,12 @@
+<h3> Uploading unstructured files?<h3>
+<p>An unstructured file just refers to any file that does not have any rows or columns. Vast majority of the files are unstructured. Performing data mining on unstructured is more challenging than structured.</p>
+<p>This application accepts only 2 types of unstructured text files - TXT and DOCX.</p>
+<h3>What happens after I upload?</h3>
+<p>Make sure you press the <b>Submit</b> button after you upload.</p>
+<p>You are provided with a choice on how you want to parse your data - tf-idf (term-frequency inverse document) or Latent Dirichlet allocation(LDA).</p>
+<p>Get info about tf-idf at this link: <a href="https://en.wikipedia.org/wiki/Tf%E2%80%93idf">https://en.wikipedia.org/wiki/Tf%E2%80%93idf</a> (Right-click the link and select 'Open link in new tab').</p>
+<p>Get info about LDA at this link:  <a href="https://en.wikipedia.org/wiki/Latent_Dirichlet_allocation">https://en.wikipedia.org/wiki/Latent_Dirichlet_allocation</a> (Right-click the link and select 'Open link in new tab').</p>
+<p>Basically tf-idf and LDA calculate specific values for each word for each file - all words are the columns and each file is a row. If a word is present in 2 files then it shall have 2 different values for each of the 2 files.</p>
+<p>If you are uploading only 1 file, you have the option of each row representing a paragraph of the file instead of just one row representing one file. Select the <b>'Adding only 1 file'</b> option as 'Yes'.</p>
+<p>This type of tables are necessary to perform all the relevant data modelling operations on the uploaded files.</p>
+<p>You can filter out words that you do not want by using <b>word stemming</b> and <b>word lemmatization</b>. They are provided as options and you can click on the respective help button for more info.</p>
