@@ -3,40 +3,52 @@ import os
 import numpy as np
 from multiprocessing import Pool, freeze_support
 import re
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
 import pytesseract
 import textract
-from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer, WordNetLemmatizer 
+from nltk.corpus import words, stopwords
+from nltk.stem import PorterStemmer, WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 import nltk
 nltk.download('punkt')
+nltk.download('words')
 
 supportedImageExtension = ['bmp', 'gif', 'jfif', 'jpeg', 'jpg', 'png', 'pnm', 'tiff']
 
 def performStemming(listOfFilesAsStrs):
     listOfFilesAsStrsStem = []
     for eachStr in listOfFilesAsStrs:
-        words = word_tokenize(eachStr)
-        rootWords = []
+        eachStrNoPunc = re.sub(r'[^\w\s]', ' ', eachStr)  # replace all punctuations with spaces
+        tokenizedWords = word_tokenize(eachStrNoPunc)
+        # remove words that are not tokenized properly - meaningless words
+        #tokenizedWords = list(filter(lambda a: a not in words.words(), tokenizedWords))
+        rootWords = [] # new list which will contains all the stemmed version of all the words
         ps = PorterStemmer()
-        for w in words:
+        for w in tokenizedWords:
             rootWord = ps.stem(w)
+            # print(w ," stemmed as ", rootWord)
             rootWords.append(rootWord)
         listOfFilesAsStrsStem.append(' '.join([str(eachRootWord) for eachRootWord in rootWords]))
     return listOfFilesAsStrsStem
 
 def performLemmatization(listOfFilesAsStrs):
-    listOfFilesAsStrsStem = []
+    listOfFilesAsStrsLem = []
     for eachStr in listOfFilesAsStrs:
-        words = word_tokenize(eachStr)
-        rootWords = []
+        eachStrNoPunc = re.sub(r'[^\w\s]',' ',eachStr) # replace all punctuations with spaces
+        tokenizedWords = word_tokenize(eachStrNoPunc)
+        # remove words that are not tokenized properly - meaningless words
+        # tokenizedWords = list(filter(lambda a: a not in words.words(), tokenizedWords))
+        rootWords = [] # new list which will contains all the lemmatized version of all the words
         lemmatizer = WordNetLemmatizer()
-        for w in words:
-            rootWord = lemmatizer.lemmatize(w)
+        for w in tokenizedWords:
+            rootWord = lemmatizer.lemmatize(w) # convert nouns to root form
+            rootWord = lemmatizer.lemmatize(rootWord, pos="v") # convert verbs to root form
+            rootWord = lemmatizer.lemmatize(rootWord, pos="a") # convert adjectives to root form
+            # print(w ," lemmatized as ", rootWord)
             rootWords.append(rootWord)
-        listOfFilesAsStrsStem.append(' '.join([str(eachRootWord) for eachRootWord in rootWords]))
-    return listOfFilesAsStrsStem
+        listOfFilesAsStrsLem.append(' '.join([str(eachRootWord) for eachRootWord in rootWords]))
+    return listOfFilesAsStrsLem
 
 def removeStopWordsAndOtherUselessText(wordList):
     '''
@@ -47,6 +59,7 @@ def removeStopWordsAndOtherUselessText(wordList):
     # get stop words from the stopwords library
     stopWordsInLibrary = set(stopwords.words('english'))
     updatedWordList = [word for word in wordList if word not in stopWordsInLibrary and not word.isdigit()]
+    print("Update word list:",updatedWordList)
     return updatedWordList
 
 def getFileExtension(filename):
@@ -57,6 +70,30 @@ def getFileExtension(filename):
     '''
     extension = filename.rsplit('.', 1)[1].lower()
     return extension
+
+def returnUnstructuredFileAsListOfParas(filePath):
+    '''
+    Return a list containing all paragraphs of the unstructured file
+    :param filePath: the file path of the unstructured file
+    :return:
+    '''
+    filename = getNameFromPath(filePath)
+    extension = getFileExtension(filename)
+    print("extension:"+extension)
+    data = ''
+    listOfParas = []
+    if extension == 'txt':
+        with open(filePath, encoding="utf8") as file:
+            data = file.read()
+            listOfParas = data.split('\n')
+
+    elif extension == 'docx':
+        data = textract.process(filePath)
+        data = data.decode("utf-8")
+        listOfParas = data.split('\n\n')
+
+    print("listOfParas after conversion: ",listOfParas)
+    return listOfParas
 
 def returnUnstructuredFileAsSingleString(filePath):
     '''
@@ -71,8 +108,6 @@ def returnUnstructuredFileAsSingleString(filePath):
     if extension == 'txt':
         with open(filePath, encoding="utf8") as file:
             data = file.read().replace('\n', '')
-    elif extension in supportedImageExtension:
-        data = pytesseract.image_to_string(filePath)
     elif extension == 'docx':
         data = textract.process(filePath)
         data = data.decode("utf-8")
@@ -89,9 +124,10 @@ def getNameFromPath(filePath):
     folderList = filePath.split('\\')
     return folderList[len(folderList)-1]
 
-def convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath):
+def convert_files_csv_tfidf(onlyOneFile, stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath):
     """
     Generate a csv file with all the td-idf values of all words in the passed list if files
+    :param: onlyOneFile: flag to check if only 1 unstructured file has been uploaded so that the parsing happens differently
     :param: stemming: flag to to check if user wants stemming to be performed on the file
     :param: lemmatization: flag to to check if user wants lemmatization to be performed on the file
     :param listOfFiles: list of all text files
@@ -101,10 +137,13 @@ def convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePath
     """
     listOfFilesAsStrs = []
 
-    for eachFilePath in listOfFilePaths:
-        allContentsAsSingleString = returnUnstructuredFileAsSingleString(eachFilePath)
-        if (allContentsAsSingleString!=""):
-            listOfFilesAsStrs.append(allContentsAsSingleString)
+    if (onlyOneFile=="No"):
+        for eachFilePath in listOfFilePaths:
+            allContentsAsSingleString = returnUnstructuredFileAsSingleString(eachFilePath)
+            if (allContentsAsSingleString!=""):
+                listOfFilesAsStrs.append(allContentsAsSingleString)
+    else:
+        listOfFilesAsStrs = returnUnstructuredFileAsListOfParas(listOfFilePaths[0])
 
     if (stemming=="Yes"):
         listOfFilesAsStrs = performStemming(listOfFilesAsStrs)
@@ -139,19 +178,105 @@ def convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePath
                 break
             if (count==0):
                 # first row - header
-                eachLine = "filename,"+eachLine
+                if (onlyOneFile == "No"):
+                    eachLine = "filename,"+eachLine
+                else:
+                    eachLine = "Paragraph Number," + eachLine
                 count+=1
             else:
                 # first column contains original file name
-                filename = listOfFiles[count-1].filename
-                print("filename:",filename)
-                eachLine = filename+","+eachLine
-                count+=1
+                if (onlyOneFile == "No"):
+                    filename = listOfFiles[count-1].filename
+                    print("filename:",filename)
+                    eachLine = filename+","+eachLine
+                else:
+                    eachLine = str(count) + "," + eachLine
+
+                count += 1
 
             eachLine = eachLine+'\n'
             csvFile.write(eachLine)
     csvFileName = getNameFromPath(csvPath)
     return csvFileName
+
+def convert_files_csv_lda(onlyOneFile, stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath, topics):
+    """
+    Generate a csv file with all the lda values of all words in the passed list if files
+    :param: onlyOneFile: flag to check if only 1 unstructured file has been uploaded so that the parsing happens differently
+    :param: stemming: flag to to check if user wants stemming to be performed on the file
+    :param: lemmatization: flag to to check if user wants lemmatization to be performed on the file
+    :param listOfFiles: list of all text files
+    :param listOfFilePaths: list of all respective paths of the text files
+    :param csvPath: path where the created csv file is saved
+    :param topics: number of chosen topics
+    :return:
+    """
+    listOfFilesAsStrs = []
+
+    if (onlyOneFile=="No"):
+        for eachFilePath in listOfFilePaths:
+            allContentsAsSingleString = returnUnstructuredFileAsSingleString(eachFilePath)
+            if (allContentsAsSingleString!=""):
+                listOfFilesAsStrs.append(allContentsAsSingleString)
+    else:
+        listOfFilesAsStrs = returnUnstructuredFileAsListOfParas(listOfFilePaths[0])
+
+    if (stemming=="Yes"):
+        listOfFilesAsStrs = performStemming(listOfFilesAsStrs)
+
+    if (lemmatization=="Yes"):
+       listOfFilesAsStrs = performLemmatization(listOfFilesAsStrs);
+
+    if (len(listOfFilesAsStrs)==0):
+        return "fail"
+
+    # perform lda and create result dataframe
+    tf_vectorizer = CountVectorizer(stop_words='english')
+    tf = tf_vectorizer.fit_transform(listOfFilesAsStrs)
+    tf_feature_names = tf_vectorizer.get_feature_names()
+
+    lda = LatentDirichletAllocation(n_components=topics, random_state=0).fit(tf)
+
+    resultList = lda.transform(tf)
+    print("resultList: ",resultList)
+
+    list_of_columns = []
+    for i in range(0, topics):
+        col = 'Topic' + str(i+1)
+        list_of_columns.append(col)
+
+    df = pd.DataFrame(resultList, columns=list_of_columns)
+
+    dfRowsAsCSV = df.to_csv(index=False).split('\r\n')
+
+    count = 0
+    with open(csvPath, 'w') as csvFile:
+        for eachLine in dfRowsAsCSV:
+            if (eachLine==''):
+                break
+            if (count==0):
+                # first row - header
+                if (onlyOneFile == "No"):
+                    eachLine = "filename,"+eachLine
+                else:
+                    eachLine = "Paragraph Number," + eachLine
+                count+=1
+            else:
+                # first column contains original file name
+                if (onlyOneFile == "No"):
+                    filename = listOfFiles[count-1].filename
+                    print("filename:",filename)
+                    eachLine = filename+","+eachLine
+                else:
+                    eachLine = str(count) + "," + eachLine
+
+                count += 1
+
+            eachLine = eachLine+'\n'
+            csvFile.write(eachLine)
+    csvFileName = getNameFromPath(csvPath)
+    return csvFileName
+
 
 def convert_txt_to_csv(filename, path, delimiter):
     """

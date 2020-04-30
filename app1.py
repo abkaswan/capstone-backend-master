@@ -17,7 +17,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 import scipy.cluster.hierarchy as shc
-from helper.upload import convert_files_csv_tfidf, convert_txt_to_csv, allowed_file, get_file, calculate_meta
+from helper.upload import convert_files_csv_tfidf, convert_files_csv_lda, convert_txt_to_csv, allowed_file, get_file, calculate_meta
 from helper.general import add_code
 from helper.visualization import generate_histogram, generate_boxplot, generate_atag, generate_correlation, save_plot, apply_pca
 from helper.mining import generate_report, generate_rmse_table, save_model
@@ -42,6 +42,7 @@ import scipy.sparse
 from nltk.corpus import stopwords
 import pyLDAvis.gensim
 from gensim.models import Word2Vec
+from helper.authentication import hash_password, verify_password
 
 def json_serializer(key, value):
     if type(value) == str:
@@ -89,6 +90,7 @@ def find_stats(filename):
     #     return stats
     # else:
     stats_collection = db['statistics']
+    print('filename: ',filename)
     stats = list(stats_collection.find({'filename': filename}))[0]['stats']
     return stats
 
@@ -97,13 +99,47 @@ def find_stats(filename):
 def hello_world():
     return json.dumps({'hello':'world from Rahul'}), 200
 
+@app.route('/register', methods=['POST'])
+def register():
+    print("called /register")
+    username = request.form['username']
+    password = request.form['password']
+    hashed_password = hash_password(password)
+    file_collection = db['user_accounts']
+    ls = list(file_collection.find({'username': username})) #check if an existing account with the same username exists
+    if (len(ls)>0):
+        return json.dumps({'message': 'duplicate'}), 200
+
+    record = {'username': username, 'password': hashed_password}
+    file_collection.insert(record)
+    return json.dumps({'message': 'success'}), 200
+
+@app.route('/login', methods=['POST'])
+def login():
+    print("called /login")
+    username = request.form['username']
+    file_collection = db['user_accounts']
+    ls = list(file_collection.find({'username': username}))  # check if the username exists
+
+    # wrong username
+    if (len(ls) == 0):
+        return json.dumps({'message': 'wrong username'}), 200
+
+    stored_password = ls[0]['password']
+    provided_password = request.form['password']
+
+    # wrong password
+    if not verify_password(stored_password, provided_password):
+        return json.dumps({'message': 'wrong password'}), 200
+
+    return json.dumps({'message': 'success'}), 200
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
     print("called /upload")
     print("request:",request.form)
     if request.method == 'POST':
-        # Unstructured data has been uploaded
+        # Structured data has been uploaded
         if 'file' in request.files:
             file = request.files['file']
             if 'description' in request.form:
@@ -167,6 +203,22 @@ def upload_file():
                 print('metadata', metadata)
                 # after successful completion of function, add that code to database
                 add_code(filename, file_collection, code)
+
+                if 'workflow' in request.form:
+                    # function has been called from the workflow screen
+                    username = request.form['username']
+                    workflow_name = request.form['workflow_name']
+                    workflow_file_db = db['workflow-file'] # db to map username and workflow name with uploaded file
+                    # check if a file has been uploaded with the same username and same workflow name
+                    ls = list(workflow_file_db.find({'username': username,'workflow_name': workflow_name}))
+
+                    if (len(ls)==0): # no file has been uploaded with the same username and same workflow name
+                        workflow_file_db.insert({'version': 1,'username': username,'workflow_name': workflow_name, 'filename': filename})
+                    else:
+                        latest_version = int(ls[len(ls)-1]['version'])
+                        workflow_file_db.insert({'version': latest_version+1,'username': username, 'workflow_name': workflow_name, 'filename': filename})
+
+
                 return json.dumps({'message': 'file uploaded successfully',
                                    'filename': filename, 'metadata': metadata}), 200
         else:
@@ -184,6 +236,11 @@ def upload_file():
             else:
                 description = ''
 
+            if 'onlyOneFile' in request.form:
+                onlyOneFile = request.form['onlyOneFile']
+            else:
+                onlyOneFile = 'No'
+
             if 'stemming' in request.form:
                 stemming = request.form['stemming']
             else:
@@ -193,6 +250,12 @@ def upload_file():
                 lemmatization = request.form['lemmatization']
             else:
                 lemmatization = 'No'
+
+            if 'parsingType' in request.form:
+                parsingType = request.form['parsingType']
+            else:
+                parsingType = 'TF-IDF'
+
 
             filename = secure_filename(listOfFiles[0].filename)
             # generating unique id every time so same filenames do not overlap
@@ -207,8 +270,18 @@ def upload_file():
                 eachFileName = secure_filename(eachFile.filename)
                 eachFile.save(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
                 listOfFilePaths.append(os.path.join(app.config['UPLOAD_FOLDER'], eachFileName))
+
             # call method to create to generate the dataframe and create the csv files
-            filename = convert_files_csv_tfidf(stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath)
+            if parsingType == "TF-IDF":
+                filename = convert_files_csv_tfidf(onlyOneFile, stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath)
+            else:
+                if 'topics' in request.form:
+                    topics = request.form['topics']
+                    topics = int(topics) # convert no. of topics to int from string
+                else:
+                    topics = 5
+
+                filename = convert_files_csv_lda(onlyOneFile, stemming, lemmatization, listOfFiles, listOfFilePaths, csvPath, topics)
 
             # handle case when files uploaded have no data
             if filename == "fail":
@@ -488,11 +561,11 @@ def remove_missing():
     data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
 
     # now adding code
-    code = '# code to remove missing values\n'
+    '''code = '# code to remove missing values\n'
     code += "# columns you have selected\n"
     code += "column = '" + column + "'\n"
     code += "data = data[pd.notnull(data[column])].reset_index(drop=True)\n"
-    add_code(file_key, file_collection, code)
+    add_code(file_key, file_collection, code)'''
     print('removed missing value')
     return json.dumps({"message" : "Removed missing values successfully"}), 200
 
@@ -515,13 +588,13 @@ def replace_by_specific():
     data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
 
     # now adding code
-    code = '# code to replace by specific value\n'
+    '''code = '# code to replace by specific value\n'
     code += "# columns you have selected\n"
     code += "column = '" + column + "'\n"
     code += "value = np.dtype(data[column].dtype.name).type(value)\n"
     code += "data[column].fillna(value, inplace=True)\n"
     code += "data = data[pd.notnull(data[column])].reset_index(drop=True)\n"
-    add_code(file_key, file_collection, code)
+    add_code(file_key, file_collection, code)'''
 
     return json.dumps({"message" : "File Updated Successfully"}), 200
 
@@ -546,14 +619,14 @@ def replace_value():
     data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
 
     # now adding code
-    code = '# code to replace by given value with specific value\n'
+    '''code = '# code to replace by given value with specific value\n'
     code += "column = '" + column + "'\n"
     code += "old_value = '" + request.form['oldValue'] + '"\n'
     code += "old_value = np.dtype(data[column].dtype.name).type(old_value)\n"
     code += "new_value = '" + request.form['newValue'] + '"\n'
     code += "new_value = np.dtype(data[column].dtype.name).type(new_value)\n"
     code += "data[column].replace(old_value, new_value, inplace=True)\n"
-    add_code(file_key, file_collection, code)
+    add_code(file_key, file_collection, code)'''
     return json.dumps({"message" : "Replaced values successfully"}), 200
 
 
@@ -582,7 +655,7 @@ def remove_range():
     data.to_json(os.path.join(app.config['UPLOAD_FOLDER'], file_key + '.json'), orient='records')
 
     # now adding code
-    code = '# code to remove values outside range\n'
+    '''code = '# code to remove values outside range\n'
     code += "column = '" + column + "'\n"
     code += "min_value = '" + min_value + "'\n"
     code += "max_value = '" + max_value + "'\n"
@@ -591,7 +664,7 @@ def remove_range():
     code += "indexes = data.loc[(data[column] > max_value) | (data[column] < min_value)].index\n"
     code += "data.drop(labels=list(indexes), axis=0, inplace=True)\n"
     code += "data.reset_index(inplace=True, drop=True)\n"
-    add_code(file_key, file_collection, code)
+    add_code(file_key, file_collection, code)'''
 
     return json.dumps({"message": "Removed rows outside range Successfully"}), 200
 
@@ -927,7 +1000,8 @@ def linear_regression():
     valuation_type = request.form['valuationType']
     print('valuation', valuation, type(valuation))
     target = request.form['target_col']
-
+    print("columns: ",columns)
+    print("target: ",target)
     if len(valuation) == 0:
         valuation = 0.3
 
@@ -938,7 +1012,9 @@ def linear_regression():
         valuation_type = 'TTS'
 
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
-    data = data[(data.values != '?').all(axis=1)]
+    print('data:', data)
+    #data = data[(data.values != '?').all(axis=1)]
+    print('data after conversion:', data)
     data.dropna(inplace=True)
     data = data[columns + [target]]     # only selecting necessary columns
     code += "data = data[columns + [target]]     # only selecting necessary columns\n"
@@ -1251,16 +1327,17 @@ def posts():
 @app.route('/topic-modeling', methods=['GET', 'POST'])
 def topicModeling():
     print("called /topic-modeling")
+    print(request.form)
     print(request.form['fileKey'])
     file_key = request.form['fileKey']
-    print("file_key: ", file_key)
+    selectAllCols = request.form['selectAllCols']
 
     # retrieve latest file key from db if not retrieved from front end
     if file_key == "testkey":
         file_collection = db['data_files']
         lastEntry = file_collection.find().sort([('timestamp', -1)]).limit(1)
         if lastEntry.count()==0:
-            return json.dumps({'html_filename': "No file has been uploaded. Please upload atleast 1 file in the upload file tab."}), 200
+            return json.dumps({'description': "No file has been uploaded. Please upload atleast 1 file in the upload file tab."}), 200
         else:
             for entry in lastEntry:
                 file_key = entry['filename']
@@ -1268,8 +1345,12 @@ def topicModeling():
     print("file_key: ", file_key)
     num_topics = request.form['n_topics']
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
-    listOfWords = list(data.columns.values)
-    listOfWords = listOfWords[1:]
+
+    if selectAllCols == "Yes":
+        listOfWords = list(data.columns.values)
+        listOfWords = listOfWords[1:]
+    else:
+        listOfWords = request.form['columns'].split(',')
 
     text_data = []
     text_data.append(listOfWords)
@@ -1286,21 +1367,32 @@ def topicModeling():
     lda = gensim.models.ldamodel.LdaModel.load('model.gensim')
     lda_display = pyLDAvis.gensim.prepare(lda, corpus, dictionary, sort_topics=False)
 
-    '''if (len(lda_display)>0):
-        parseLDAdisplayForTopicModeling(lda_display)'''
-
-    html_filename = app.config['VIZ_FOLDER'] + "\\" + 'topics.html'
-    pyLDAvis.save_html(lda_display, html_filename)
-
     file_collection = db['help-data']
+    ls = list(file_collection.find({'topic': "TM_output"}))
 
-    # delete previous topics.html saved in server
-    file_collection.delete_many({'description': 'topics.html'})
+    if len(ls)>0:
+        versionNos = []
+        for i in range(len(ls)):
+            versionNos.append(ls[i]['version'])
 
-    record = {'topic': "TM_output", 'description': "topics.html"}
+        versionNos.sort()
+        version = str(int(versionNos[len(versionNos)-1])+1)
+        html_filename = 'topics_' + version + '.html'
+
+    else:
+        html_filename = 'topics_0.html'
+        version = '0'
+
+
+    html_file_url = app.config['VIZ_FOLDER'] + "\\" + html_filename
+    pyLDAvis.save_html(lda_display, html_file_url)
+
+
+
+    record = {'topic': "TM_output", 'version':version, 'description': html_filename}
     file_collection.insert_one(record)
 
-    return json.dumps({'description': "topics.html"}), 200
+    return json.dumps({'description': html_filename}), 200
 
 @app.route('/word-embedding', methods=['GET', 'POST'])
 def wordEmbedding():
@@ -1308,6 +1400,7 @@ def wordEmbedding():
     print(request.form['fileKey'])
     file_key = request.form['fileKey']
     print("file_key: ", file_key)
+    selectAllCols = request.form['selectAllCols']
 
     # retrieve latest file key from db if not retrieved from front end
     if file_key == "testkey":
@@ -1321,17 +1414,26 @@ def wordEmbedding():
 
 
     data = get_file(file_key, app.config['UPLOAD_FOLDER'])
-    print("data:",data)
-    listOfWords = list(data.columns.values)
+
+    if (selectAllCols == "Yes"):
+        listOfWords = list(data.columns.values)
+    else:
+        listOfWords = request.form['columns'].split(',')
+        data = data[listOfWords]
+
+    print("data: ",data)
     dataAsList = data.values.tolist()
+    print("dataAsList: ",dataAsList)
+
 
     allWordsInAllFiles = []
-    for eachRow in dataAsList:
+    '''for eachRow in dataAsList:
         wordsPerFile = []
         for i in range(1,len(eachRow)):
             if float(eachRow[i])>0:
                 wordsPerFile.append(listOfWords[i])
-        allWordsInAllFiles.append(wordsPerFile)
+        allWordsInAllFiles.append(wordsPerFile)'''
+    allWordsInAllFiles.append(listOfWords)
 
     print("allWordsInAllFiles:",allWordsInAllFiles)
         # train model
@@ -1370,6 +1472,147 @@ def removeStopWords():
     file_stats.update({'filename': file_key}, {'$set':{'stats': metadata}})
 
     return json.dumps({"message": "Removed stop words from the tf-idf table successfully"}), 200
+
+@app.route('/getUsersWorkflows', methods=['GET', 'POST'])
+def getUsersWorkflows():
+    print("called /getUsersWorkflows")
+    print("request.form:", request.form)
+    username = request.form['username']
+    type = request.form['type']
+    file_collection = db['workflow-data']
+    ls = list (
+        file_collection.find({'username': username, 'type': type}))
+    list_of_workflow_names = []
+    for row in ls:
+        list_of_workflow_names.append(row['workflow_name'])
+
+    return json.dumps({'result': list_of_workflow_names}), 200
+
+@app.route('/getWorkflow', methods=['GET', 'POST'])
+def getWorkflow():
+    print("called /getWorkflow")
+    print("request.form:", request.form)
+    username = request.form['username']
+    workflow_name = request.form['workflow_name']
+    type = request.form['type']
+    file_collection = db['workflow-data']
+    ls = list(
+        file_collection.find({'username': username, 'workflow_name': workflow_name, 'type': type}))  # check if an existing account with the same username exists
+    if (len(ls) == 0):
+        return json.dumps({'message': 'no workflow'}), 200
+
+    lastWorkflowEntry = ls[len(ls)-1] # get last entry since we need to retrieve recently created workflow
+    print("lastWorkflowEntry:",lastWorkflowEntry)
+    texts = lastWorkflowEntry['texts']
+    colors = lastWorkflowEntry['colors']
+    locs = lastWorkflowEntry['locs']
+    return json.dumps({'message': 'success', 'texts':texts, 'colors':colors, 'locs':locs}), 200
+
+@app.route('/deleteWorkflow', methods=['GET', 'POST'])
+def deleteWorkflow():
+    print("called /deleteWorkflow")
+    print("request.form:", request.form)
+    username = request.form['username']
+    workflow_name = request.form['workflow_name']
+    type = request.form['type']
+    file_collection = db['workflow-data']
+    file_collection.delete_many({'username': username,'workflow_name': workflow_name, 'type':type})
+    return json.dumps({'message': 'Successly deleted workflow: '+workflow_name}), 200
+
+@app.route('/saveWorkflow', methods=['GET', 'POST'])
+def saveWorkflow():
+    print("called /saveWorkflow")
+    print("request.form:",request.form)
+    username = request.form['username']
+    workflow_name = request.form['workflow_name']
+    type = request.form['type']
+    filename = request.form['filename']
+    # retrieve all the texts, colors, locations of the node data array
+    texts = []
+    key = "text0"
+    i = 1
+    while key in request.form:
+        texts.append(request.form[key])
+        key = key[0:4] + str(i)
+        i += 1
+
+    print("texts: ",texts)
+
+    colors = []
+    key = "color0"
+    i = 1
+    while key in request.form:
+        colors.append(request.form[key])
+        key = key[0:5] + str(i)
+        i += 1
+
+    print("colors: ",colors)
+
+
+    locs = []
+    key = "loc0"
+    i = 1
+    while key in request.form:
+        locs.append(request.form[key])
+        key = key[0:3] + str(i)
+        i += 1
+
+    print("locs: ",locs)
+
+
+    file_collection = db['workflow-data']
+    ls = list(file_collection.find({'username': username, 'workflow_name': workflow_name}))
+    if (len(ls) == 0):
+        record = {'username': username, 'workflow_name':workflow_name, 'filename':filename, 'type':type, 'texts':texts, 'colors': colors, "locs":locs}
+        file_collection.insert(record)
+        return json.dumps({'message': 'Saved workflow ' + workflow_name + ' successfully'}), 200
+    else:
+        file_collection.update({'username': username, 'workflow_name':workflow_name}, {'$set': {'filename':filename, 'type':type, 'texts':texts, 'colors': colors, "locs":locs}})
+    return json.dumps({'message': 'Overwritten workflow '+workflow_name+' successfully'}), 200
+
+@app.route('/displayDataWorkflow', methods=['GET', 'POST'])
+def displayDataWorkflow():
+    print("called /displayDataWorkflow")
+    print("request.form:", request.form)
+    username = request.form['username']
+    workflow_name = request.form['workflow_name']
+    key = request.form['key']
+    filename = request.form['filename']
+    topic = username + '_' + workflow_name + '_' + key
+    html_files_db = db['help-data']
+    # check if a html file containing the data at this node has been created before
+    ls = list(html_files_db.find({'topic': topic}))
+    description = username + '_' + workflow_name + '_' + key + '_' + filename.split('.')[0] + '.html'
+    if (len(ls) == 0):  # no file has been uploaded with the same username and same workflow name
+        data = get_file(filename, app.config['UPLOAD_FOLDER'])
+        data_html = data.to_html()
+        # write html to file
+        html_file_url = app.config['UPLOAD_FOLDER'] + "\\" + description
+        data_html_file = open(html_file_url, "w")
+        data_html_file.write(data_html)
+        data_html_file.close()
+        html_files_db.insert({'topic': topic, 'description': description})
+    else:
+        workflow_db = db['workflow-data']
+        workflow_ls = list(workflow_db.find({'username': username,'workflow_name':workflow_name}))
+        if (len(workflow_ls)>0):
+            saved_filename = workflow_ls[len(workflow_ls) - 1]['filename']
+            print("filename: ",filename)
+            print("saved_filename: ",saved_filename)
+
+            # different file uploaded for same workflow or file has been modified
+            if filename!=saved_filename:
+                # update help data in this case
+                data = get_file(filename, app.config['UPLOAD_FOLDER'])
+                data_html = data.to_html()
+                # write html to file
+                html_file_url = app.config['UPLOAD_FOLDER'] + "\\" + description
+                data_html_file = open(html_file_url, "w")
+                data_html_file.write(data_html)
+                data_html_file.close()
+                html_files_db.update({'topic': topic}, {'$set': {'description': description}})
+
+    return json.dumps({'description': description}), 200
 
 
 if __name__ == '__main__':
