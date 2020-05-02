@@ -1,5 +1,5 @@
 # capstone-backend-master
-Back-end code (Python, MongoDB) of a web-based data mining tool used for various data mining operations like data cleaning, transformation, modelling, visualization on structured/unstructured files.
+Back-end code (Python, MongoDB) of a web-based data mining tool used for various data mining operations like data cleaning, transformation, modelling, visualization on structured/unstructured files along with drag-drop workflow creation.
 
 Adding data to the database:
 1) mongo/help-data.json
