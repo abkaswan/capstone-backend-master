@@ -11,12 +11,14 @@ To run the back-end code:
 
 2) Go to app1.py
 
-3) Change the following 3 lines to point to your specific folder: 
+3) Check if the folders 'data-file' and 'word-embedding' are inside the folder 'static'. If not create them.
+
+4) Change the following 3 lines to point to your specific folder: 
 app.config['UPLOAD_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static\data-file',
 app.config['VIZ_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static',
 app.config['WE_FOLDER'] = r'C:\Users\rchak\Desktop\Capstone\capstone-backend-master\static\word-embedding'
 
-4) Open a terminal in the main folder and run - python app1.py
+5) Open a terminal in the main folder and run - python app1.py
 
-5) Certain python libraries may not work or be installed in your local machine. The program shall throw an error and indicate the specific library name. Just run:
+6) Certain python libraries may not work or be installed in your local machine. The program shall throw an error and indicate the specific library name. Just run:
 pip install libraryname
